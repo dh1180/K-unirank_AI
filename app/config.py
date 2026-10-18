@@ -15,6 +15,7 @@ class Settings(BaseSettings):
     openai_api_key: str = ""
     llm_model: str = "gpt-4.1-mini"
     llm_timeout_seconds: float = Field(default=12.0, ge=2, le=30)
+    rag_db_path: str = "/data/official_documents.sqlite3"
 
 
 @lru_cache

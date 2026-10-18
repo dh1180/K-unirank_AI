@@ -71,3 +71,20 @@ ARM64 라즈베리파이에서 `docker compose up -d --build`로 실행할 수 �
 - 프롬프트 인젝션/모델의 잘못된 요청에도 **모델 출력은 AdmissionAsk 필드만 통과 가능**. 모델에 URL·임의 SQL·입결 값을 생성하는 도구 권한이 없습니다.
 - 외부 LLM 실패/미설정일 때는 `/api/v1/ai/admissions/compare` 구조화 조회로 계속 처리 가능.
 - 외부 모델 출력의 유효성은 항상 검증하고, 실제 공개 입결 데이터와 출처는 Spring Boot에서만 가져옵니다.
+
+## 공식 모집요강 PDF 검색
+
+**RAG 문서 검색 기반:** 관리자가 원문 출처를 직접 검증한 PDF를 Raspberry Pi 5 로컬 파일에서 색인합니다. 공개 사용자에게 URL 다운로드·파일 업로드를 허용하지 않습니다.
+
+```bash
+# 개발 PC에서는 RAG_DB_PATH=./local_docs.sqlite3 를 먼저 설정
+python -m app.rag ingest ./official-admissions.pdf --university "예시대학" \
+  --year 2026 --title "2026학년도 모집요강" \
+  --source-url "https://admissions.example.ac.kr/guide.pdf"
+
+python -m app.rag search "학생부종합 서류평가" --university "예시대학" --year 2026
+```
+
+`POST /api/v1/ai/docs/search` (서비스 토큰 필수): 검색어·대학·학년도 조건으로 SQLite FTS5/BM25 문서 passage 반환. 결과에는 공식 문서 링크와 PDF 페이지 번호가 포함됩니다.
+
+**제약:** 이 단계는 문서 검색·출처 근거 보존 기능이며, 벡터 임베딩과 생성 모델의 문서 요약은 아직 구현 전입니다. 스캔 이미지 기반 PDF는 OCR을 제공하지 않으므로 텍스트를 추출할 수 없습니다. 실제 대학별 공식 문서는 아직 등록하지 않았습니다.
