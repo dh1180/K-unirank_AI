@@ -16,6 +16,17 @@ class AdmissionAsk(BaseModel):
     limit: int = Field(default=5, ge=1, le=10)
 
 
+class NaturalLanguageQuestion(BaseModel):
+    question: str = Field(min_length=8, max_length=500)
+    limit: int = Field(default=5, ge=1, le=10)
+
+
+class NaturalLanguageAnswer(BaseModel):
+    parsed_filters: AdmissionAsk
+    result: "AdmissionAnswer"
+    pipeline: list[str]
+
+
 class SpringAdmissionRow(BaseModel):
     resultId: int
     universityId: int
