@@ -5,6 +5,7 @@ from fastapi import Depends, FastAPI, Header, HTTPException, status
 
 from app.config import Settings, get_settings
 from app.models import AdmissionAnswer, AdmissionAsk, NaturalLanguageAnswer, NaturalLanguageQuestion
+from app.rag import DocumentSearch, SearchQuery, SearchResult
 from app.services.llm_parser import IntentExtractionError, MissingGrade, NaturalLanguageParser
 from app.services.harness import AdmissionHarness
 from app.services.spring_client import SpringAdmissionTool, SpringToolFailure
@@ -73,3 +74,11 @@ async def answer_natural_language(
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except SpringToolFailure as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@app.post("/api/v1/ai/docs/search", response_model=SearchResult,
+          dependencies=[Depends(require_internal_token)])
+async def search_documents(request: SearchQuery,
+                           settings: Settings = Depends(get_settings)) -> SearchResult:
+    passages = DocumentSearch(settings.rag_db_path).search(request)
+    return SearchResult(passages=passages)

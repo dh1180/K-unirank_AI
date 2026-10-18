@@ -15,3 +15,10 @@ services:
       - no-new-privileges:true
     mem_limit: 512m
     pids_limit: 128
+    environment:
+      RAG_DB_PATH: /data/official_documents.sqlite3
+    volumes:
+      - rag_data:/data
+
+volumes:
+  rag_data:
