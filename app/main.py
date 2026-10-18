@@ -82,3 +82,18 @@ async def search_documents(request: SearchQuery,
                            settings: Settings = Depends(get_settings)) -> SearchResult:
     passages = DocumentSearch(settings.rag_db_path).search(request)
     return SearchResult(passages=passages)
+
+
+@app.post("/api/v1/ai/parse", response_model=AdmissionAsk,
+          dependencies=[Depends(require_internal_token)])
+async def parse_admission_question(
+    request: NaturalLanguageQuestion,
+    settings: Settings = Depends(get_settings),
+) -> AdmissionAsk:
+    """Spring asks Pi for typed filters; Pi never needs Railway DB access."""
+    try:
+        return await NaturalLanguageParser(settings).extract(request.question, request.limit)
+    except MissingGrade as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except IntentExtractionError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
