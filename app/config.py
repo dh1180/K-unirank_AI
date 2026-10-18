@@ -12,6 +12,9 @@ class Settings(BaseSettings):
     internal_service_token: str = ""
     spring_api_timeout_seconds: float = Field(default=8.0, ge=1, le=30)
     max_ai_concurrency: int = Field(default=8, ge=1, le=100)
+    openai_api_key: str = ""
+    llm_model: str = "gpt-4.1-mini"
+    llm_timeout_seconds: float = Field(default=12.0, ge=2, le=30)
 
 
 @lru_cache

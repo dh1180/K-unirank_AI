@@ -6,10 +6,11 @@
 - [K-unirank_FrontEnd](https://github.com/dh1180/K-unirank_FrontEnd): Next.js + React
 - [K-unirank_v2](https://github.com/dh1180/K-unirank_v2): 현재 운영 중인 Django (변경하지 않음)
 
-> **개발 1단계:** 정형 입결 조회용 읽기 전용 하네스입니다. 아직 외부 LLM·모집요강 RAG·pgvector 연동이나 공개 AI 채팅 화면은 **구현하지 않았습니다**. 정보 출처를 먼저 검증하고 순차적으로 도입합니다.
+> **개발 2단계:** 외부 LLM API를 이용한 **자연어→정형 검색조건 파싱**까지 추가했습니다. LLM은 답변의 입결 숫자·대학을 생성하지 않고, Spring Boot 조회 근거만 답변에 사용합니다. 모집요강 RAG·벡터 검색과 공개 채팅 화면은 아직 미구현입니다.
 
 ## 구현된 기능
 
+- `POST /api/v1/ai/questions`: 입력한 한국어 질문에서 LLM Structured Outputs로 `grade, year, track, special, scope, region, major`만 추출 → Pydantic 검증 → 기존 Spring 입결 조회 → 근거 있는 답변 구성. `OPENAI_API_KEY`가 없으면 503, 내신 정보 없으면 422 (임의로 등급 추정 금지)
 - `GET /health`: 상태 확인
 - `POST /api/v1/ai/admissions/compare`: 인증된 Spring Boot 내부 호출자가 내신 등급·학과·지역·학년을 전달하면, **허용된 Spring API 1개만 호출하여** 기존 공개 입결을 조회하고 수치와 출처/학과 링크를 표시
 - Pydantic으로 등급 1.0~9.0, 검색 조건, 결과 개수를 제한하며 외부에서 SQL이나 API URL을 지정할 수 없음
@@ -62,3 +63,11 @@ ARM64 라즈베리파이에서 `docker compose up -d --build`로 실행할 수 �
 ## 개발 규칙
 
 [Contextory PR #10](https://github.com/kau-likelion-14th-hackathon/Contextory_BackEnd/pull/10) 형식의 `feat:` 커밋, `[Feat]` PR 제목, PR 타입·변경·테스트·참고 사항을 기록합니다.
+
+## LLM 연동 설계
+
+- OpenAI Chat Completions의 `response_format: json_schema` (strict) 사용. 모델은 `LLM_MODEL` 환경변수로 선택, 기본 `gpt-4.1-mini`.
+- 비용: 한 질의당 최대 220 출력 토큰, 응답 타임아웃 12초. 모델 비용은 Railway와 별도이며, API 계정 설정 필요.
+- 프롬프트 인젝션/모델의 잘못된 요청에도 **모델 출력은 AdmissionAsk 필드만 통과 가능**. 모델에 URL·임의 SQL·입결 값을 생성하는 도구 권한이 없습니다.
+- 외부 LLM 실패/미설정일 때는 `/api/v1/ai/admissions/compare` 구조화 조회로 계속 처리 가능.
+- 외부 모델 출력의 유효성은 항상 검증하고, 실제 공개 입결 데이터와 출처는 Spring Boot에서만 가져옵니다.

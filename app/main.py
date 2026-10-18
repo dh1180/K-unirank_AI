@@ -4,7 +4,8 @@ import secrets
 from fastapi import Depends, FastAPI, Header, HTTPException, status
 
 from app.config import Settings, get_settings
-from app.models import AdmissionAnswer, AdmissionAsk
+from app.models import AdmissionAnswer, AdmissionAsk, NaturalLanguageAnswer, NaturalLanguageQuestion
+from app.services.llm_parser import IntentExtractionError, MissingGrade, NaturalLanguageParser
 from app.services.harness import AdmissionHarness
 from app.services.spring_client import SpringAdmissionTool, SpringToolFailure
 
@@ -45,5 +46,30 @@ async def compare_admissions(
     try:
         harness = AdmissionHarness(SpringAdmissionTool(settings))
         return await harness.run(request)
+    except SpringToolFailure as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@app.post("/api/v1/ai/questions", response_model=NaturalLanguageAnswer, dependencies=[
+    Depends(require_internal_token)
+])
+async def answer_natural_language(
+    request: NaturalLanguageQuestion,
+    settings: Settings = Depends(get_settings),
+) -> NaturalLanguageAnswer:
+    # LLM's only authority is parsing typed search filters; no SQL/URL or rating
+    # figures from the model are trusted. The answer is composed from Spring evidence.
+    try:
+        parsed = await NaturalLanguageParser(settings).extract(request.question, request.limit)
+        grounded = await AdmissionHarness(SpringAdmissionTool(settings)).run(parsed)
+        return NaturalLanguageAnswer(
+            parsed_filters=parsed,
+            result=grounded,
+            pipeline=["llm.parse_intent", "spring.admissions.compare", "evidence.compose"],
+        )
+    except MissingGrade as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except IntentExtractionError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     except SpringToolFailure as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
