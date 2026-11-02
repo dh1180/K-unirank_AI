@@ -27,6 +27,8 @@ class SpringAdmissionTool:
             params["year"] = req.year
         if req.region:
             params["region"] = req.region
+        if req.university:
+            params["university"] = req.university
         if req.major:
             params["q"] = req.major
         try:

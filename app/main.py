@@ -6,20 +6,10 @@ from fastapi import Depends, FastAPI, Header, HTTPException, status
 from app.config import Settings, get_settings
 from app.models import AdmissionAnswer, AdmissionAsk, NaturalLanguageAnswer, NaturalLanguageQuestion
 from app.rag import DocumentSearch, SearchQuery, SearchResult
-from app.services.llm_parser import IntentExtractionError, MissingGrade, NaturalLanguageParser
+from app.services.llm_parser import IntentExtractionError, NaturalLanguageParser
 from app.services.harness import AdmissionHarness
 from app.services.spring_client import SpringAdmissionTool, SpringToolFailure
-from app.services.request_budget import RequestBudget
-
-budget = RequestBudget()
-
-
-async def provider_budget(settings: Settings = Depends(get_settings)):
-    await budget.enter(settings.daily_request_limit, settings.max_ai_concurrency)
-    try:
-        yield
-    finally:
-        await budget.leave()
+from app.services.question_policy import QuestionClarification
 
 app = FastAPI(
     title="K-unirank AI",
@@ -76,7 +66,7 @@ async def compare_admissions(
 
 
 @app.post("/api/v1/ai/questions", response_model=NaturalLanguageAnswer, dependencies=[
-    Depends(require_internal_token), Depends(provider_budget)
+    Depends(require_internal_token)
 ])
 async def answer_natural_language(
     request: NaturalLanguageQuestion,
@@ -92,7 +82,7 @@ async def answer_natural_language(
             result=grounded,
             pipeline=["llm.parse_intent", "spring.admissions.compare", "evidence.compose"],
         )
-    except MissingGrade as exc:
+    except QuestionClarification as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except IntentExtractionError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
@@ -109,7 +99,7 @@ async def search_documents(request: SearchQuery,
 
 
 @app.post("/api/v1/ai/parse", response_model=AdmissionAsk,
-          dependencies=[Depends(require_internal_token), Depends(provider_budget)])
+          dependencies=[Depends(require_internal_token)])
 async def parse_admission_question(
     request: NaturalLanguageQuestion,
     settings: Settings = Depends(get_settings),
@@ -117,7 +107,7 @@ async def parse_admission_question(
     """Spring asks for typed filters; this service has no database credentials."""
     try:
         return await NaturalLanguageParser(settings).extract(request.question, request.limit)
-    except MissingGrade as exc:
+    except QuestionClarification as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except IntentExtractionError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc

@@ -27,3 +27,6 @@ class RequestBudget:
     async def leave(self):
         async with self.lock:
             self.active -= 1
+
+
+provider_budget = RequestBudget()
