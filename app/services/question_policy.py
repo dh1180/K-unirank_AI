@@ -113,7 +113,12 @@ def university_mentions(question):
         masked = masked[:match.start()] + " " * (match.end()-match.start()) + masked[match.end():]
     for candidate in re.findall(r"(?:^|\s)([가-힣A-Za-z]{2,20}(?:대학교|대학|대))(?=\s|[,·/]|에서|의|를|으로|$)", question):
         if candidate.lower() not in aliases and candidate not in MAJORS and candidate not in {"전체대학", "모든대학", "어느대학", "수도권대학", "서울권대학", "국립대", "사립대", "전문대"}:
-            raise QuestionClarification("대학 이름을 확인해 주세요. 등록된 정확한 대학명으로 검색할 수 있습니다.")
+            residue = candidate.lower()
+            for match in reversed(mentions(residue, aliases)):
+                residue = residue[:match.start()] + " " * (match.end()-match.start()) + residue[match.end():]
+            residue = re.sub(r"이랑|하고|랑|와|과|및|또는|그리고|\s", "", residue)
+            if residue:
+                raise QuestionClarification("대학 이름을 확인해 주세요. 등록된 정확한 대학명으로 검색할 수 있습니다.")
     # Suggest a clarification for close spellings; never silently correct to a different university.
     for candidate in re.findall(r"[가-힣A-Za-z]{2,20}", question.lower()):
         token = re.sub(r"(?:중에서는|중에서|에서는|에서|으로|까지|하고|이랑|랑|와|과|만|도|를|을|은|는|의)$", "", candidate)
