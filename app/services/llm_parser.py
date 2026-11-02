@@ -1,5 +1,6 @@
 """LLM is only an intent parser. It never generates trusted admission evidence."""
 import json
+import re
 from decimal import Decimal, InvalidOperation
 
 import httpx
@@ -32,6 +33,13 @@ class NaturalLanguageParser:
             raise IntentExtractionError("무료 모델만 사용할 수 있습니다.")
         if not key:
             raise IntentExtractionError("LLM API가 설정되지 않았습니다. 정형 검색 기능을 이용해 주세요.")
+        mentioned_grades = {
+            Decimal(a or b) for a, b in re.findall(
+                r"(?:내신|평균(?:등급)?|등급)\s*(?:이|은|는|:)?\s*([1-9](?:\.\d{1,2})?)(?![\d.])"
+                r"|(?<![\d.])([1-9](?:\.\d{1,2})?)\s*등급", question)
+        }
+        if not mentioned_grades:
+            raise MissingGrade("내신 평균등급(1.0~9.0)을 알려주세요.")
         schema = {
             "type": "object",
             "properties": {
@@ -108,6 +116,10 @@ class NaturalLanguageParser:
                     "grade": Decimal(str(raw["grade"])),
                     "limit": limit,
                 })
+                if filters.grade not in mentioned_grades:
+                    raise IntentExtractionError("입력한 내신 등급을 확인해 주세요. 예: 내신 3.0등급")
+                if filters.year is not None and str(filters.year) not in question:
+                    raise IntentExtractionError("입력하지 않은 학년도가 반환되었습니다. 다시 검색해 주세요.")
                 return filters
         except (httpx.HTTPError, ValueError, KeyError, TypeError,
                 ValidationError, InvalidOperation, IndexError) as exc:
