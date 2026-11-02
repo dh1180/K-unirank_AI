@@ -111,11 +111,11 @@ def test_model_cannot_invent_a_grade_or_unmentioned_year(monkeypatch):
              "scope": "near", "region": None, "major": None}
     fake = FakeClient(reply)
     monkeypatch.setattr("app.services.llm_parser.httpx.AsyncClient", lambda **kw: fake)
-    with pytest.raises(IntentExtractionError, match="내신"):
-        asyncio.run(NaturalLanguageParser(settings()).extract("내신 3.5등급 학과 찾아줘", 5))
+    parsed = asyncio.run(NaturalLanguageParser(settings()).extract("내신 3.5등급 학과 찾아줘", 5))
+    assert parsed.grade == Decimal("3.5") and parsed.year is None
     reply["grade"], reply["year"] = 3.5, 2026
-    with pytest.raises(IntentExtractionError, match="학년도"):
-        asyncio.run(NaturalLanguageParser(settings()).extract("내신 3.5등급 학과 찾아줘", 5))
+    parsed = asyncio.run(NaturalLanguageParser(settings()).extract("내신 3.5등급 학과 찾아줘", 5))
+    assert parsed.year is None
     fake.request = None
     with pytest.raises(MissingGrade):
         asyncio.run(NaturalLanguageParser(settings()).extract("2026 서울 간호학과 알려줘", 5))

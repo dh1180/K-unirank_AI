@@ -13,6 +13,8 @@ class AdmissionAsk(BaseModel):
     scope: Literal["near", "all"] = "near"
     region: str | None = Field(default=None, max_length=60)
     major: str | None = Field(default=None, max_length=100)
+    university: str | None = Field(default=None, max_length=160)
+    notes: list[str] = Field(default_factory=list, max_length=5)
     limit: int = Field(default=5, ge=1, le=10)
 
 
