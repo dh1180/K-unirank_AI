@@ -1,5 +1,6 @@
 """Only deployment operators can set the trusted Spring API endpoint."""
 from functools import lru_cache
+from typing import Literal
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -13,6 +14,9 @@ class Settings(BaseSettings):
     spring_api_timeout_seconds: float = Field(default=8.0, ge=1, le=30)
     max_ai_concurrency: int = Field(default=8, ge=1, le=100)
     openai_api_key: str = ""
+    llm_provider: Literal["openai", "openrouter"] = "openai"
+    openrouter_api_key: str = ""
+    daily_request_limit: int = Field(default=40, ge=1, le=1000)
     llm_model: str = "gpt-4.1-mini"
     llm_timeout_seconds: float = Field(default=12.0, ge=2, le=30)
     rag_db_path: str = "/data/official_documents.sqlite3"
