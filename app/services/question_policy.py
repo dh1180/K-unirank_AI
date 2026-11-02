@@ -71,6 +71,9 @@ def university_mentions(question):
             raise QuestionClarification("대학 제외 조건은 아직 지원하지 않습니다. 확인할 대학 이름을 직접 지정해 주세요.")
         found.append(aliases[match.group().lower()])
         masked = masked[:match.start()] + " " * (match.end()-match.start()) + masked[match.end():]
+    for candidate in re.findall(r"(?:^|\s)([가-힣A-Za-z]{2,20}(?:대학교|대학|대))(?=\s|에서|의|를|으로|$)", question):
+        if candidate.lower() not in aliases and candidate not in {"전체대학", "모든대학", "어느대학", "수도권대학", "서울권대학", "국립대", "사립대", "전문대"}:
+            raise QuestionClarification("대학 이름을 확인해 주세요. 등록된 정확한 대학명으로 검색할 수 있습니다.")
     found = list(dict.fromkeys(found))
     if len(found) > 3:
         raise QuestionClarification("한 번에 대학 3곳까지 지정해 주세요.")
@@ -134,6 +137,7 @@ class ExplicitQuestion:
         university, masked = university_mentions(question)
         region_aliases = dict(REGIONS)
         region_aliases["수도권"] = "서울,경기,인천"
+        region_aliases["인서울"] = "서울"
         positive, excluded = set(), set()
         for m in mentions(masked, region_aliases):
             values = set(region_aliases[m.group()].split(","))

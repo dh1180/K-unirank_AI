@@ -39,6 +39,8 @@ def test_grounded_constraints(question, grade, region, major, track, university)
     ("내신 3.0 컴퓨터 제외", "관심"),
     ("내신 3.0 서울대 제외 심리", "대학 제외"),
     ("내신 3.0 2025 2026 간호", "학년도"),
+    ("내신 3.0 하버드대 컴공", "대학 이름"),
+    ("내신 3.0 교과 말고 컴공", "전형을 직접"),
 ])
 def test_unsupported_or_ambiguous_requests_need_clarification(question, detail):
     with pytest.raises(QuestionClarification, match=detail):
