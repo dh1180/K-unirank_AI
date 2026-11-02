@@ -85,6 +85,27 @@ def test_llm_fails_closed_when_api_key_missing():
         asyncio.run(NaturalLanguageParser(settings(api_key="")).extract("내신 3.2 조건 검색해줘", 5))
 
 
+def test_openrouter_is_free_only_and_never_uses_openai_key(monkeypatch):
+    reply = {"grade": 3, "year": None, "track": "student", "special": "exclude",
+             "scope": "near", "region": None, "major": "간호"}
+    fake = FakeClient(reply)
+    monkeypatch.setattr("app.services.llm_parser.httpx.AsyncClient", lambda **kw: fake)
+    config = Settings(_env_file=None, llm_provider="openrouter",
+                      openrouter_api_key="router-test", openai_api_key="do-not-use",
+                      llm_model="openrouter/free")
+    assert asyncio.run(NaturalLanguageParser(config).extract("내신 3등급 간호학과", 5)).major == "간호"
+    url, headers, body = fake.request
+    assert url == NaturalLanguageParser.OPENROUTER_ENDPOINT
+    assert headers["Authorization"] == "Bearer router-test"
+    assert body["provider"] == {"require_parameters": True,
+                                "max_price": {"prompt": 0, "completion": 0}}
+    assert "models" not in body
+    assert body["max_tokens"] == 768
+    config.llm_model = "paid/model"
+    with pytest.raises(IntentExtractionError, match="무료"):
+        asyncio.run(NaturalLanguageParser(config).extract("내신 3등급 간호학과", 5))
+
+
 def test_question_endpoint_returns_spring_grounded_evidence(monkeypatch):
     async def parse(self, question, limit):
         return AdmissionAsk(grade="2.5", year=2026, major="컴퓨터", limit=limit)

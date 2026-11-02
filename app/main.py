@@ -1,4 +1,4 @@
-"""K-unirank's private AI gateway for Raspberry Pi 5 (ARM64)."""
+"""K-unirank's private Railway AI intent gateway."""
 import secrets
 
 from fastapi import Depends, FastAPI, Header, HTTPException, status
@@ -9,6 +9,17 @@ from app.rag import DocumentSearch, SearchQuery, SearchResult
 from app.services.llm_parser import IntentExtractionError, MissingGrade, NaturalLanguageParser
 from app.services.harness import AdmissionHarness
 from app.services.spring_client import SpringAdmissionTool, SpringToolFailure
+from app.services.request_budget import RequestBudget
+
+budget = RequestBudget()
+
+
+async def provider_budget(settings: Settings = Depends(get_settings)):
+    await budget.enter(settings.daily_request_limit, settings.max_ai_concurrency)
+    try:
+        yield
+    finally:
+        await budget.leave()
 
 app = FastAPI(
     title="K-unirank AI",
@@ -37,6 +48,19 @@ def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
+@app.get("/ready")
+def ready(settings: Settings = Depends(get_settings)) -> dict[str, str]:
+    key = (settings.openrouter_api_key if settings.llm_provider == "openrouter"
+           else settings.openai_api_key)
+    if not key or len(settings.internal_service_token) < 32:
+        raise HTTPException(503, "AI 연결 설정이 완료되지 않았습니다.")
+    if settings.llm_provider == "openrouter" and not (
+        settings.llm_model == "openrouter/free" or settings.llm_model.endswith(":free")
+    ):
+        raise HTTPException(503, "무료 모델 설정을 확인해 주세요.")
+    return {"status": "ok"}
+
+
 @app.post("/api/v1/ai/admissions/compare", response_model=AdmissionAnswer, dependencies=[
     Depends(require_internal_token)
 ])
@@ -52,7 +76,7 @@ async def compare_admissions(
 
 
 @app.post("/api/v1/ai/questions", response_model=NaturalLanguageAnswer, dependencies=[
-    Depends(require_internal_token)
+    Depends(require_internal_token), Depends(provider_budget)
 ])
 async def answer_natural_language(
     request: NaturalLanguageQuestion,
@@ -85,12 +109,12 @@ async def search_documents(request: SearchQuery,
 
 
 @app.post("/api/v1/ai/parse", response_model=AdmissionAsk,
-          dependencies=[Depends(require_internal_token)])
+          dependencies=[Depends(require_internal_token), Depends(provider_budget)])
 async def parse_admission_question(
     request: NaturalLanguageQuestion,
     settings: Settings = Depends(get_settings),
 ) -> AdmissionAsk:
-    """Spring asks Pi for typed filters; Pi never needs Railway DB access."""
+    """Spring asks for typed filters; this service has no database credentials."""
     try:
         return await NaturalLanguageParser(settings).extract(request.question, request.limit)
     except MissingGrade as exc:
