@@ -106,6 +106,22 @@ def test_openrouter_is_free_only_and_never_uses_openai_key(monkeypatch):
         asyncio.run(NaturalLanguageParser(config).extract("내신 3등급 간호학과", 5))
 
 
+def test_model_cannot_invent_a_grade_or_unmentioned_year(monkeypatch):
+    reply = {"grade": 2, "year": None, "track": "student", "special": "exclude",
+             "scope": "near", "region": None, "major": None}
+    fake = FakeClient(reply)
+    monkeypatch.setattr("app.services.llm_parser.httpx.AsyncClient", lambda **kw: fake)
+    with pytest.raises(IntentExtractionError, match="내신"):
+        asyncio.run(NaturalLanguageParser(settings()).extract("내신 3.5등급 학과 찾아줘", 5))
+    reply["grade"], reply["year"] = 3.5, 2026
+    with pytest.raises(IntentExtractionError, match="학년도"):
+        asyncio.run(NaturalLanguageParser(settings()).extract("내신 3.5등급 학과 찾아줘", 5))
+    fake.request = None
+    with pytest.raises(MissingGrade):
+        asyncio.run(NaturalLanguageParser(settings()).extract("2026 서울 간호학과 알려줘", 5))
+    assert fake.request is None
+
+
 def test_question_endpoint_returns_spring_grounded_evidence(monkeypatch):
     async def parse(self, question, limit):
         return AdmissionAsk(grade="2.5", year=2026, major="컴퓨터", limit=limit)
