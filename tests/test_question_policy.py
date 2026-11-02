@@ -78,3 +78,64 @@ def test_invalid_query_does_not_call_provider(monkeypatch):
     monkeypatch.setattr("app.services.llm_parser.httpx.AsyncClient", unexpected)
     with pytest.raises(QuestionClarification, match="정시"):
         asyncio.run(NaturalLanguageParser(Settings(_env_file=None, openai_api_key="test")).extract("정시 백분위 88 컴공 찾아줘", 5))
+
+
+@pytest.mark.parametrize("alias,expected", [
+    ("건동홍", "건국대학교,동국대학교,홍익대학교"),
+    ("건동홍이랑", "건국대학교,동국대학교,홍익대학교"),
+    ("건국/동국/홍익", "건국대학교,동국대학교,홍익대학교"),
+    ("홍익대 세종", "홍익대학교 세종캠퍼스"),
+    ("한양대 에리카", "한양대학교 ERICA캠퍼스"),
+    ("건 동 홍", "건국대학교,동국대학교,홍익대학교"),
+    ("서성한", "서강대학교,성균관대학교,한양대학교"),
+    ("중경외시", "중앙대학교,경희대학교,한국외국어대학교,서울시립대학교"),
+    ("국숭세단", "국민대학교,숭실대학교,세종대학교,단국대학교 죽전캠퍼스"),
+    ("광명상가", "광운대학교,명지대학교 인문캠퍼스,명지대학교 자연캠퍼스,상명대학교,가톨릭대학교"),
+    ("한서삼", "한성대학교,서경대학교,삼육대학교"),
+    ("SKY", "서울대학교,연세대학교,고려대학교"),
+    ("건국대랑동국대랑홍익대", "건국대학교,동국대학교,홍익대학교"),
+    ("건대, 동국대, 홍대", "건국대학교,동국대학교,홍익대학교"),
+    ("외대랑 시립대", "한국외국어대학교,서울시립대학교"),
+    ("명지대", "명지대학교 인문캠퍼스,명지대학교 자연캠퍼스"),
+    ("명지대 자연캠퍼스", "명지대학교 자연캠퍼스"),
+    ("단국대 죽전캠퍼스", "단국대학교 죽전캠퍼스"),
+])
+def test_university_groups_short_names_and_campuses(alias, expected):
+    parsed = ExplicitQuestion.read(f"{alias} 2.3등급으로 갈만한 학과 찾아줘")
+    assert parsed.university == expected
+    assert parsed.region is None and parsed.major is None
+    assert parsed.grade == Decimal("2.3")
+
+
+def test_group_plus_named_university_deduplicates_and_preserves_major():
+    parsed = ExplicitQuestion.read("내신 2.3 건동홍 건국대 경영학과 교과 찾아줘")
+    assert parsed.university == "건국대학교,동국대학교,홍익대학교"
+    assert parsed.major == "경영" and parsed.track == "student"
+    assert "건동홍" in parsed.notes[0]
+
+
+@pytest.mark.parametrize("question", [
+    "내신 2.3 서울대와하버드대 컴공 찾아줘",
+    "건동흥 2.3등급 학과 찾아줘",
+    "내신 2.3 건동홍 제외 컴공",
+    "내신 2.3 건동홍 이상 컴공",
+    "내신 2.3 서성한보다 높은 대학",
+])
+def test_unknown_or_relative_group_is_not_silently_national(question):
+    with pytest.raises(QuestionClarification):
+        ExplicitQuestion.read(question)
+
+
+@pytest.mark.parametrize("model_major", ["건동홍", "건국대학교", "갈만한 학과", None])
+def test_model_does_not_turn_university_group_into_major(model_major):
+    question = "건동홍 2.3등급으로 갈만한 학과 찾아줘"
+    filters = ExplicitQuestion.read(question).resolve({"major": model_major}, question, 5)
+    assert filters["university"] == "건국대학교,동국대학교,홍익대학교"
+    assert filters["major"] is None
+
+
+def test_multiple_groups_remain_bounded():
+    parsed = ExplicitQuestion.read("내신 2.3 서성한 건동홍 중경외시 찾아줘")
+    assert len(parsed.university.split(",")) == 10
+    with pytest.raises(QuestionClarification, match="10곳"):
+        ExplicitQuestion.read("내신 2.3 서성한 건동홍 중경외시 국숭세단 찾아줘")

@@ -2,6 +2,7 @@
 import json
 import re
 from functools import lru_cache
+from difflib import get_close_matches
 from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path
@@ -47,36 +48,90 @@ def negated(text, end):
     return bool(re.match(NEGATION, text[end:]))
 
 
+# These are query aliases, never a ranking or a claim of equivalent admission standards.
+UNIVERSITY_GROUPS = {
+    "건동홍": ("건국대학교", "동국대학교", "홍익대학교"),
+    "서성한": ("서강대학교", "성균관대학교", "한양대학교"),
+    "중경외시": ("중앙대학교", "경희대학교", "한국외국어대학교", "서울시립대학교"),
+    "국숭세단": ("국민대학교", "숭실대학교", "세종대학교", "단국대학교 죽전캠퍼스"),
+    "광명상가": ("광운대학교", "명지대학교 인문캠퍼스", "명지대학교 자연캠퍼스", "상명대학교", "가톨릭대학교"),
+    "한서삼": ("한성대학교", "서경대학교", "삼육대학교"),
+    "서연고": ("서울대학교", "연세대학교", "고려대학교"),
+    "sky": ("서울대학교", "연세대학교", "고려대학교"),
+}
+UNIVERSITY_SHORT_NAMES = {
+    "건대": ("건국대학교",), "홍대": ("홍익대학교",),
+    "건국": ("건국대학교",), "동국": ("동국대학교",), "홍익": ("홍익대학교",),
+    "한양대에리카": ("한양대학교 ERICA캠퍼스",),
+    "동국대와이즈": ("동국대학교 WISE캠퍼스",),
+    "건국대충주": ("건국대학교 글로컬캠퍼스",),
+    "중대": ("중앙대학교",), "성대": ("성균관대학교",),
+    "외대": ("한국외국어대학교",), "한국외대": ("한국외국어대학교",),
+    "시립대": ("서울시립대학교",), "과기대": ("서울과학기술대학교",),
+    "서울과기대": ("서울과학기술대학교",), "항공대": ("한국항공대학교",),
+    "성균관대": ("성균관대학교",), "이화여대": ("이화여자대학교",),
+    "숙명여대": ("숙명여자대학교",), "성신여대": ("성신여자대학교",),
+    "서울여대": ("서울여자대학교",), "동덕여대": ("동덕여자대학교",),
+    "덕성여대": ("덕성여자대학교",),
+    "명지대": ("명지대학교 인문캠퍼스", "명지대학교 자연캠퍼스"),
+    "명지대학교": ("명지대학교 인문캠퍼스", "명지대학교 자연캠퍼스"),
+    "단국대": ("단국대학교 죽전캠퍼스", "단국대학교 천안캠퍼스"),
+    "단국대학교": ("단국대학교 죽전캠퍼스", "단국대학교 천안캠퍼스"),
+}
+
+
 @lru_cache(maxsize=1)
 def university_aliases():
     names = json.loads((Path(__file__).parent.parent / "university_names.json").read_text(encoding="utf-8"))
     aliases = {}
     for name in names:
-        aliases[name.replace(" ", "").lower()] = name
+        aliases[name.replace(" ", "").lower()] = (name,)
         short = name.replace("대학교", "대").replace(" ", "").lower()
         if len(short) >= 3:
-            aliases[short] = name
-    for short, name in {"항공대": "한국항공대학교", "성균관대": "성균관대학교", "이화여대": "이화여자대학교"}.items():
-        if name in names:
-            aliases[short] = name
+            aliases[short] = (name,)
+            if short.endswith("캠퍼스"):
+                aliases[short.removesuffix("캠퍼스")] = (name,)
+                aliases[name.replace(" ", "").lower().removesuffix("캠퍼스")] = (name,)
+    for short, members in (UNIVERSITY_SHORT_NAMES | UNIVERSITY_GROUPS).items():
+        if not set(members).issubset(names):
+            raise RuntimeError("대학 별칭 카탈로그를 확인해 주세요.")
+        aliases[short] = members
     return aliases
 
 
 def university_mentions(question):
     aliases = university_aliases()
-    compact = question.replace(" ", "").lower()
+    compact = re.sub(r"\s+", "", question).lower()
     found, masked = [], compact
     for match in mentions(compact, aliases):
-        if negated(compact, match.end()):
+        tail = re.sub(r"^(?:라인|대학군|그룹)", "", compact[match.end():])
+        if negated(tail, 0):
             raise QuestionClarification("대학 제외 조건은 아직 지원하지 않습니다. 확인할 대학 이름을 직접 지정해 주세요.")
-        found.append(aliases[match.group().lower()])
+        if match.group() in UNIVERSITY_GROUPS and re.match(r"(?:라인)?(?:이상|이하|보다|급|정도)", tail):
+            raise QuestionClarification("대학군의 위아래를 임의의 순위로 해석하지 않습니다. 검색할 대학군이나 대학을 직접 지정해 주세요.")
+        found.extend(aliases[match.group()])
         masked = masked[:match.start()] + " " * (match.end()-match.start()) + masked[match.end():]
-    for candidate in re.findall(r"(?:^|\s)([가-힣A-Za-z]{2,20}(?:대학교|대학|대))(?=\s|에서|의|를|으로|$)", question):
+    for candidate in re.findall(r"(?:^|\s)([가-힣A-Za-z]{2,20}(?:대학교|대학|대))(?=\s|[,·/]|에서|의|를|으로|$)", question):
         if candidate.lower() not in aliases and candidate not in MAJORS and candidate not in {"전체대학", "모든대학", "어느대학", "수도권대학", "서울권대학", "국립대", "사립대", "전문대"}:
-            raise QuestionClarification("대학 이름을 확인해 주세요. 등록된 정확한 대학명으로 검색할 수 있습니다.")
+            residue = candidate.lower()
+            for match in reversed(mentions(residue, aliases)):
+                residue = residue[:match.start()] + " " * (match.end()-match.start()) + residue[match.end():]
+            residue = re.sub(r"이랑|하고|랑|와|과|및|또는|그리고|\s", "", residue)
+            if residue:
+                raise QuestionClarification("대학 이름을 확인해 주세요. 등록된 정확한 대학명으로 검색할 수 있습니다.")
+    # Suggest a clarification for close spellings; never silently correct to a different university.
+    for candidate in re.findall(r"[가-힣A-Za-z]{2,20}", question.lower()):
+        token = re.sub(r"(?:중에서는|중에서|에서는|에서|으로|까지|하고|이랑|랑|와|과|만|도|를|을|은|는|의)$", "", candidate)
+        if token in aliases or token in REGIONS or token in MAJORS or token in {"수도권", "인서울", "대학", "학과", "내신", "전체", "전국"}:
+            continue
+        group_typos = [group for group in UNIVERSITY_GROUPS
+                       if len(group) == len(token) and sum(a != b for a, b in zip(group, token)) == 1]
+        near = group_typos[:1] or get_close_matches(token, aliases, n=1, cutoff=0.8)
+        if near and len(token) <= 8:
+            raise QuestionClarification(f"'{candidate}'의 대학 조건을 확인해 주세요. '{near[0]}'을 뜻했다면 해당 이름으로 다시 입력해 주세요.")
     found = list(dict.fromkeys(found))
-    if len(found) > 3:
-        raise QuestionClarification("한 번에 대학 3곳까지 지정해 주세요.")
+    if len(found) > 10 or len(",".join(found)) > 160:
+        raise QuestionClarification("한 번에 대학 10곳까지 지정해 주세요.")
     return ",".join(found) or None, masked
 
 
@@ -150,6 +205,11 @@ class ExplicitQuestion:
             raise QuestionClarification("제외할 지역을 각각 적어 주세요. 예: 서울 제외, 경기 제외")
         region = ",".join(r for r in REGION_ORDER if r in regions) if regions and regions!=set(REGION_ORDER) else None
         major_terms, notes = [], []
+        for alias, members in UNIVERSITY_GROUPS.items():
+            if re.search(re.escape(alias), re.sub(r"\s+", "", question).lower()):
+                notes.append(f"{alias.upper() if alias == 'sky' else alias}은 {'·'.join(members)} 조건으로 검색했습니다.")
+        if university and any("캠퍼스" in name for name in university.split(",")):
+            notes.append("캠퍼스는 결과의 대학 이름으로 구분했습니다. 특정 캠퍼스만 보려면 캠퍼스 이름까지 입력해 주세요.")
         negative_major = False
         for m in mentions(masked, MAJORS):
             if negated(masked,m.end()): negative_major=True;continue
@@ -161,7 +221,7 @@ class ExplicitQuestion:
             raise QuestionClarification("관련 학과 검색어는 한 번에 5개까지 지정해 주세요.")
         if not major_terms:
             raw = re.findall(r"(?:^|\s)([가-힣A-Za-z]{2,20}(?:학과|학부))",question)
-            major_terms = [x[:-1] if x.endswith("학과") else x for x in raw if x not in {"전체학과","모든학과"} and not negated(question, question.find(x)+len(x))]
+            major_terms = [x[:-1] if x.endswith("학과") else x for x in raw if x not in {"전체학과","모든학과","갈만한학과","지원가능한학과","추천학과"} and not negated(question, question.find(x)+len(x))]
         return cls(grade,year,next(iter(tracks),"student"),region,",".join(dict.fromkeys(major_terms)) or None,
                    university,special,"all" if re.search(r"전체\s*(?:등급|입결)|등급\s*범위\s*전체",question) else "near",notes)
 
@@ -170,6 +230,13 @@ class ExplicitQuestion:
         major = self.major
         if major is None and raw.get("major"):
             terms = [x.strip() for x in str(raw["major"]).split(",") if x.strip()]
+            if self.university:
+                aliases = university_aliases()
+                selected = set(self.university.split(","))
+                terms = [x for x in terms if x not in selected and not (
+                    x.replace(" ", "").lower() in aliases
+                    and set(aliases[x.replace(" ", "").lower()]).issubset(selected))]
+            terms = [x for x in terms if x not in {"학과", "갈만한 학과", "갈만한학과", "추천학과", "전체학과", "전체 학과"}]
             if len(terms)>5 or any(x not in question for x in terms):
                 raise QuestionClarification("학과 이름을 명확히 적어 주세요. 입력하지 않은 학과로 검색하지 않습니다.")
             major = ",".join(terms) or None
