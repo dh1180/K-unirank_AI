@@ -1,10 +1,10 @@
 """Ground explicit user constraints before trusting model output. No admission predictions."""
 import json
 import re
-from functools import lru_cache
-from difflib import get_close_matches
 from dataclasses import dataclass
 from decimal import Decimal
+from difflib import get_close_matches
+from functools import lru_cache
 from pathlib import Path
 
 
@@ -49,6 +49,12 @@ def negated(text, end):
 
 
 # These are query aliases, never a ranking or a claim of equivalent admission standards.
+# KNU10 membership: https://iei.jbnu.ac.kr/iei/31360/subview.do
+# Colloquial regional group excludes Seoul; explicit KNU10 includes it.
+REGIONAL_FLAGSHIPS = (
+    "강원대학교", "경북대학교", "경상국립대학교", "부산대학교", "전남대학교",
+    "전북대학교", "제주대학교", "충남대학교", "충북대학교",
+)
 UNIVERSITY_GROUPS = {
     "건동홍": ("건국대학교", "동국대학교", "홍익대학교"),
     "서성한": ("서강대학교", "성균관대학교", "한양대학교"),
@@ -58,6 +64,11 @@ UNIVERSITY_GROUPS = {
     "한서삼": ("한성대학교", "서경대학교", "삼육대학교"),
     "서연고": ("서울대학교", "연세대학교", "고려대학교"),
     "sky": ("서울대학교", "연세대학교", "고려대학교"),
+    **dict.fromkeys(("지거국", "지방거점국립대", "지방거점국립대학", "지방거점국립대학교",
+                     "지역거점국립대", "지역거점국립대학", "지역거점국립대학교"), REGIONAL_FLAGSHIPS),
+    **dict.fromkeys(("거점국립대", "거점국립대학", "거점국립대학교",
+                     "국가거점국립대", "국가거점국립대학", "국가거점국립대학교", "knu10"),
+                    ("서울대학교", *REGIONAL_FLAGSHIPS)),
 }
 UNIVERSITY_SHORT_NAMES = {
     "건대": ("건국대학교",), "홍대": ("홍익대학교",),
@@ -77,6 +88,8 @@ UNIVERSITY_SHORT_NAMES = {
     "명지대학교": ("명지대학교 인문캠퍼스", "명지대학교 자연캠퍼스"),
     "단국대": ("단국대학교 죽전캠퍼스", "단국대학교 천안캠퍼스"),
     "단국대학교": ("단국대학교 죽전캠퍼스", "단국대학교 천안캠퍼스"),
+    "경상대": ("경상국립대학교",),
+    "부경대": ("국립부경대학교",),
 }
 
 
@@ -111,7 +124,15 @@ def university_mentions(question):
             raise QuestionClarification("대학군의 위아래를 임의의 순위로 해석하지 않습니다. 검색할 대학군이나 대학을 직접 지정해 주세요.")
         found.extend(aliases[match.group()])
         masked = masked[:match.start()] + " " * (match.end()-match.start()) + masked[match.end():]
-    for candidate in re.findall(r"(?:^|\s)([가-힣A-Za-z]{2,20}(?:대학교|대학|대))(?=\s|[,·/]|에서|의|를|으로|$)", question):
+    def already_recognized(start, end):
+        compact_start = len(re.sub(r"\s+", "", question[:start]))
+        compact_end = len(re.sub(r"\s+", "", question[:end]))
+        return not masked[compact_start:compact_end].strip()
+
+    for candidate_match in re.finditer(r"(?:^|\s)([가-힣A-Za-z]{2,20}(?:대학교|대학|대))(?=\s|[,·/]|에서|의|를|으로|$)", question):
+        candidate = candidate_match.group(1)
+        if already_recognized(*candidate_match.span(1)):
+            continue
         if candidate.lower() not in aliases and candidate not in MAJORS and candidate not in {"전체대학", "모든대학", "어느대학", "수도권대학", "서울권대학", "국립대", "사립대", "전문대"}:
             residue = candidate.lower()
             for match in reversed(mentions(residue, aliases)):
@@ -120,7 +141,10 @@ def university_mentions(question):
             if residue:
                 raise QuestionClarification("대학 이름을 확인해 주세요. 등록된 정확한 대학명으로 검색할 수 있습니다.")
     # Suggest a clarification for close spellings; never silently correct to a different university.
-    for candidate in re.findall(r"[가-힣A-Za-z]{2,20}", question.lower()):
+    for candidate_match in re.finditer(r"[가-힣A-Za-z]{2,20}", question.lower()):
+        if already_recognized(*candidate_match.span()):
+            continue
+        candidate = candidate_match.group()
         token = re.sub(r"(?:중에서는|중에서|에서는|에서|으로|까지|하고|이랑|랑|와|과|만|도|를|을|은|는|의)$", "", candidate)
         if token in aliases or token in REGIONS or token in MAJORS or token in {"수도권", "인서울", "대학", "학과", "내신", "전체", "전국"}:
             continue
@@ -183,13 +207,14 @@ class ExplicitQuestion:
             raise QuestionClarification("비교할 전형을 직접 지정해 주세요. 예: 학생부종합")
         if len(tracks)>1:
             raise QuestionClarification("학생부교과와 학생부종합 중 비교할 전형 하나를 선택해 주세요.")
-        if re.search(r"국립(?:대)?만|사립.*제외|전문대|수능최저|면접.*(?:없|제외)|여대.*제외|등록금|기숙사|취업률", question):
+        university, masked = university_mentions(question)
+        # Recognized groups are exact university lists, not an unsupported ownership filter.
+        if re.search(r"국립(?:대(?:학(?:교)?)?)?\s*만", masked) or re.search(r"사립.*제외|전문대|수능최저|면접.*(?:없|제외)|여대.*제외|등록금|기숙사|취업률", question):
             raise QuestionClarification("이 검색은 지역·대학·학과·내신·교과/종합 조건을 비교합니다. 대학 유형·최저·면접·등록금 조건은 대학 정보와 모집요강에서 확인해 주세요.")
         special_terms = r"농어촌|기회균등|기회균형|지역인재|특성화고|특별전형"
         if re.search(rf"(?:{special_terms})\s*(?:전형)?\s*만",question):
             raise QuestionClarification("특별전형만 지정하는 검색은 입결 찾기를 이용해 주세요. 일반 전형과 함께 보려면 '특별전형 포함'이라고 입력해 주세요.")
         special = "all" if re.search(rf"(?:{special_terms}).{{0,8}}포함", question) else "exclude"
-        university, masked = university_mentions(question)
         region_aliases = dict(REGIONS)
         region_aliases["수도권"] = "서울,경기,인천"
         region_aliases["인서울"] = "서울"
@@ -205,9 +230,15 @@ class ExplicitQuestion:
             raise QuestionClarification("제외할 지역을 각각 적어 주세요. 예: 서울 제외, 경기 제외")
         region = ",".join(r for r in REGION_ORDER if r in regions) if regions and regions!=set(REGION_ORDER) else None
         major_terms, notes = [], []
-        for alias, members in UNIVERSITY_GROUPS.items():
-            if re.search(re.escape(alias), re.sub(r"\s+", "", question).lower()):
-                notes.append(f"{alias.upper() if alias == 'sky' else alias}은 {'·'.join(members)} 조건으로 검색했습니다.")
+        compact_question = re.sub(r"\s+", "", question).lower()
+        # Use the same longest matches as university_mentions: nested names must not add
+        # a conflicting larger group (e.g. 지방거점국립대 must never include Seoul).
+        matched_groups = dict.fromkeys(m.group() for m in mentions(compact_question, university_aliases())
+                                       if m.group() in UNIVERSITY_GROUPS)
+        for alias in matched_groups:
+            members = UNIVERSITY_GROUPS[alias]
+            scope_note = " (서울대 제외·기본 대학 항목 기준)" if members == REGIONAL_FLAGSHIPS else ""
+            notes.append(f"{alias.upper() if alias in {'sky', 'knu10'} else alias}{scope_note}은 {'·'.join(members)} 조건으로 검색했습니다.")
         if university and any("캠퍼스" in name for name in university.split(",")):
             notes.append("캠퍼스는 결과의 대학 이름으로 구분했습니다. 특정 캠퍼스만 보려면 캠퍼스 이름까지 입력해 주세요.")
         negative_major = False
